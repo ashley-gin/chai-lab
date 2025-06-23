@@ -14,10 +14,12 @@ QIQLVQSGPELKKPGETVKISCTTSGYTFTNYGLNWVKQAPGKGFKWMAWINTYTGEPTYADDFKGRFAFSLETSASTTY
 DVLMIQTPLSLPVSLGDQASISCRSSQSLIHINGNTYLEWYLQKPGQSPKLLIYKVSNRFSGVPDRFSGSGSGTDFTLKISRVEAEDLGVYYCFQGSHVPFTFGAGTKLELKRADAAPTVSIFPPSSEQLTSGGASVVCFLNNFYPKDINVKWKIDGSERQNGVLNSWTDQDSKDSTYSMSSTLTLTKDEYERHNSYTCEATHKTSTSPIVKSFNRNECVY
 """.strip()
 
-fasta_path = Path("/tmp/example.fasta")
+fasta_path = Path("7syz_ABC_AHL.fasta")
 fasta_path.write_text(example_fasta)
 
-output_dir = Path("/tmp/outputs")
+output_dir = Path("patchdock_test")
+
+restraint_path = Path(__file__).with_name("7syz_patchdock_test.restraints")
 
 # We provide two example sets of restraints:
 # contact.restraints - specifies residue-residue contacts
@@ -25,7 +27,7 @@ output_dir = Path("/tmp/outputs")
 candidates = run_inference(
     fasta_file=fasta_path,
     output_dir=output_dir,
-    constraint_path=Path(__file__).with_name("contact.restraints"),
+    constraint_path=restraint_path,
     # 'default' setup
     num_trunk_recycles=3,
     num_diffn_timesteps=200,

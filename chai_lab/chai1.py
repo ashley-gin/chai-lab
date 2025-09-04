@@ -566,8 +566,8 @@ def run_inference(
             seed=seed + trunk_idx if seed is not None else None,
             device=torch_device,
             low_memory=low_memory,
-            entity_names_as_chain_names_in_output_cif=fasta_names_as_cif_chains,
-        )
+        entity_names_as_chain_names_in_output_cif=fasta_names_as_cif_chains,
+    )
         all_candidates.append(cand)
     return StructureCandidates.concat(all_candidates)
 
@@ -835,54 +835,70 @@ def run_folding_on_context(
 
     sigmas_and_gammas = list(zip(sigmas[:-1], sigmas[1:], gammas[:-1]))
 
-    # Initial atom positions
-    _, num_atoms = atom_single_mask.shape
-    atom_pos = sigmas[0] * torch.randn(
-        batch_size * num_diffn_samples, num_atoms, 3, device=device
-    )
+    #Batch for parallelization of diffusion
+    atom_pos_result = []
+    max_samples_per_batch = 1 #(we ran this at 32 when we did 1000 diffusion rounds)
 
-    with _component_moved_to("diffusion_module.pt", device=device) as diffusion_module:
-        for sigma_curr, sigma_next, gamma_curr in tqdm(
-            sigmas_and_gammas, desc="Diffusion steps"
-        ):
-            # Center coords
-            atom_pos = center_random_augmentation(
-                atom_pos,
-                atom_single_mask=repeat(
-                    atom_single_mask,
-                    "b a -> (b ds) a",
-                    ds=num_diffn_samples,
-                ),
-            )
+    num_full_batches = num_diffn_samples // max_samples_per_batch
+    remainder = num_diffn_samples % max_samples_per_batch
+    batch_size_list = [max_samples_per_batch for _ in range(num_full_batches)]
+    if remainder > 0:
+        batch_size_list.append(remainder)
 
-            # Alg 2. lines 4-6
-            noise = DiffusionConfig.S_noise * torch.randn(
-                atom_pos.shape, device=atom_pos.device
-            )
-            sigma_hat = sigma_curr + gamma_curr * sigma_curr
-            atom_pos_noise = (sigma_hat**2 - sigma_curr**2).clamp_min(1e-6).sqrt()
-            atom_pos_hat = atom_pos + noise * atom_pos_noise
-
-            # Lines 7-8
-            denoised_pos = _denoise(
-                diff_mod=diffusion_module,
-                atom_pos=atom_pos_hat,
-                sigma=sigma_hat,
-                ds=num_diffn_samples,
-            )
-            d_i = (atom_pos_hat - denoised_pos) / sigma_hat
-            atom_pos = atom_pos_hat + (sigma_next - sigma_hat) * d_i
-
-            # Lines 9-11
-            if sigma_next != 0 and DiffusionConfig.second_order:  # second order update
+    #loop through the batches
+    for curr_num_diffn_samples in batch_size_list:
+        # Initial atom positions
+        _, num_atoms = atom_single_mask.shape
+        atom_pos = sigmas[0] * torch.randn(
+            batch_size * curr_num_diffn_samples, num_atoms, 3, device=device
+        )
+    
+        with _component_moved_to("diffusion_module.pt", device=device) as diffusion_module:
+            for sigma_curr, sigma_next, gamma_curr in tqdm(
+                sigmas_and_gammas, desc="Diffusion steps"
+            ):
+                # Center coords
+                atom_pos = center_random_augmentation(
+                    atom_pos,
+                    atom_single_mask=repeat(
+                        atom_single_mask,
+                        "b a -> (b ds) a",
+                        ds=curr_num_diffn_samples,
+                    ),
+                )
+    
+                # Alg 2. lines 4-6
+                noise = DiffusionConfig.S_noise * torch.randn(
+                    atom_pos.shape, device=atom_pos.device
+                )
+                sigma_hat = sigma_curr + gamma_curr * sigma_curr
+                atom_pos_noise = (sigma_hat**2 - sigma_curr**2).clamp_min(1e-6).sqrt()
+                atom_pos_hat = atom_pos + noise * atom_pos_noise
+    
+                # Lines 7-8
                 denoised_pos = _denoise(
                     diff_mod=diffusion_module,
-                    atom_pos=atom_pos,
-                    sigma=sigma_next,
-                    ds=num_diffn_samples,
+                    atom_pos=atom_pos_hat,
+                    sigma=sigma_hat,
+                    ds=curr_num_diffn_samples,
                 )
-                d_i_prime = (atom_pos - denoised_pos) / sigma_next
-                atom_pos = atom_pos + (sigma_next - sigma_hat) * ((d_i_prime + d_i) / 2)
+                d_i = (atom_pos_hat - denoised_pos) / sigma_hat
+                atom_pos = atom_pos_hat + (sigma_next - sigma_hat) * d_i
+    
+                # Lines 9-11
+                if sigma_next != 0 and DiffusionConfig.second_order:  # second order update
+                    denoised_pos = _denoise(
+                        diff_mod=diffusion_module,
+                        atom_pos=atom_pos,
+                        sigma=sigma_next,
+                        ds=curr_num_diffn_samples,
+                    )
+                    d_i_prime = (atom_pos - denoised_pos) / sigma_next
+                    atom_pos = atom_pos + (sigma_next - sigma_hat) * ((d_i_prime + d_i) / 2)
+
+            atom_pos_result.append(atom_pos)
+
+    atom_pos = torch.cat(atom_pos_result)
 
     del static_diffusion_inputs
     torch.cuda.empty_cache()

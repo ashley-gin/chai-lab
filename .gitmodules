@@ -1,3 +1,6 @@
 [submodule "SL_collab"]
 	path = SL_collab
 	url = https://github.com/ashley-gin/SL_collab.git
+[submodule "updated_analyses_SL"]
+	path = updated_analyses_SL
+	url = git@github.com:ashley-gin/updated_toxo_ppis.git
